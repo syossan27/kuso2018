@@ -14,6 +14,7 @@ import (
 	_ "github.com/go-sql-driver/mysql"
 	"io"
 	"strconv"
+	"time"
 )
 
 type (
@@ -133,11 +134,26 @@ func fetchDataFromCSV(svc *s3.S3, param Param) ([]Response, error){
 		} else if err != nil {
 			return nil, err
 		}
+
+		var age string
+		if line[3] == "" {
+			age = "-"
+		} else {
+			birthParse, err := time.Parse("2006-01-02", line[3])
+			if err != nil {
+				panic(err)
+			}
+			age, err = calcAge(birthParse)
+			if err != nil {
+				panic(err)
+			}
+		}
+
 		response := Response{
 			Name: line[0],
 			Image: line[1],
 			Height: line[2],
-			Age: line[3],
+			Age: age,
 			Bust: line[4],
 			Cup: line[5],
 			West: line[6],
@@ -157,6 +173,28 @@ func fetchDataFromCSV(svc *s3.S3, param Param) ([]Response, error){
 	}
 
 	return responses, nil
+}
+
+func calcAge(t time.Time) (string, error) {
+	// 現在日時を数値のみでフォーマット (YYYYMMDD)
+	dateFormatOnlyNumber := "20060102" // YYYYMMDD
+
+	now := time.Now().Format(dateFormatOnlyNumber)
+	birthday := t.Format(dateFormatOnlyNumber)
+
+	// 日付文字列をそのまま数値化
+	nowInt, err := strconv.Atoi(now)
+	if err != nil {
+		return "-", err
+	}
+	birthdayInt, err := strconv.Atoi(birthday)
+	if err != nil {
+		return "-", err
+	}
+
+	// (今日の日付 - 誕生日) / 10000 = 年齢
+	age := (nowInt - birthdayInt) / 10000
+	return strconv.Itoa(age), nil
 }
 
 func successResponse(body string) (events.APIGatewayProxyResponse, error) {
