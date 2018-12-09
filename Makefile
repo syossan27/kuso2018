@@ -3,5 +3,5 @@
 build:
 	@GOOS=linux go build -o kuso kuso.go
 
-make-zip: build
+zip: build
 	@build-lambda-zip -o kuso.zip kuso

@@ -6,36 +6,31 @@ import (
 	"encoding/csv"
 	"encoding/json"
 	"fmt"
+	"io"
+	"strconv"
+	"strings"
+	"time"
+
 	"github.com/aws/aws-lambda-go/events"
 	"github.com/aws/aws-lambda-go/lambda"
 	"github.com/aws/aws-sdk-go/aws"
 	"github.com/aws/aws-sdk-go/aws/session"
 	"github.com/aws/aws-sdk-go/service/s3"
 	_ "github.com/go-sql-driver/mysql"
-	"io"
-	"strconv"
-	"time"
 )
 
 type (
-	Param struct {
-		Height int
-		Age int
-		Bust int
-		Cup string
-		West int
-		Hip int
-	}
+	Params []string
 
 	Response struct {
-		Name string `json:"name"`
-		Image string `json:"image"`
+		Name   string `json:"name"`
+		Image  string `json:"image"`
 		Height string `json:"height"`
-		Age string `json:"age"`
-		Bust string `json:"bust"`
-		Cup string `json:"cup"`
-		West string `json:"west"`
-		Hip string `json:"hip"`
+		Age    string `json:"age"`
+		Bust   string `json:"bust"`
+		Cup    string `json:"cup"`
+		West   string `json:"west"`
+		Hip    string `json:"hip"`
 	}
 )
 
@@ -44,24 +39,12 @@ func kuso(ctx context.Context, req events.APIGatewayProxyRequest) (events.APIGat
 	svc := s3.New(sess)
 
 	// Request Params
-	height, err := strconv.Atoi(req.QueryStringParameters["height"])
-	age, err := strconv.Atoi(req.QueryStringParameters["age"])
-	bust, err := strconv.Atoi(req.QueryStringParameters["bust"])
-	cup := req.QueryStringParameters["cup"]
-	west, err := strconv.Atoi(req.QueryStringParameters["west"])
-	hip, err := strconv.Atoi(req.QueryStringParameters["hip"])
-
-	// New Param struct
-	param := Param{
-		Height: height,
-		Age: age,
-		Bust: bust,
-		Cup: cup,
-		West: west,
-		Hip: hip,
+	var params []string
+	if req.QueryStringParameters["params"] != "" {
+		params = strings.Split(req.QueryStringParameters["params"], ",")
 	}
 
-	responses, err := fetchDataFromCSV(svc, param)
+	responses, err := fetchDataFromCSV(svc, params)
 	if err != nil {
 		return errorResponse(), err
 	}
@@ -75,20 +58,21 @@ func kuso(ctx context.Context, req events.APIGatewayProxyRequest) (events.APIGat
 	return successResponse(string(resultJSON))
 }
 
-func fetchDataFromCSV(svc *s3.S3, param Param) ([]Response, error){
+func fetchDataFromCSV(svc *s3.S3, params Params) ([]Response, error) {
+	sql := createSQL(params)
+
 	// S3からCSV読み込み
-	params := &s3.SelectObjectContentInput{
+	param := &s3.SelectObjectContentInput{
 		Bucket:          aws.String("kuso2018"),
 		Key:             aws.String("av.csv"),
 		ExpressionType:  aws.String(s3.ExpressionTypeSql),
-		Expression:      aws.String("SELECT * FROM S3Object"),
+		Expression:      aws.String(sql),
 		RequestProgress: &s3.RequestProgress{},
 		InputSerialization: &s3.InputSerialization{
 			CompressionType: aws.String("NONE"),
 			CSV: &s3.CSVInput{
 				FileHeaderInfo: aws.String(s3.FileHeaderInfoUse),
 				FieldDelimiter: aws.String(","),
-				AllowQuotedRecordDelimiter: aws.Bool(true),
 			},
 		},
 		OutputSerialization: &s3.OutputSerialization{
@@ -98,7 +82,7 @@ func fetchDataFromCSV(svc *s3.S3, param Param) ([]Response, error){
 		},
 	}
 
-	resp, err := svc.SelectObjectContent(params)
+	resp, err := svc.SelectObjectContent(param)
 	if err != nil {
 		return nil, err
 	}
@@ -150,29 +134,65 @@ func fetchDataFromCSV(svc *s3.S3, param Param) ([]Response, error){
 		}
 
 		response := Response{
-			Name: line[0],
-			Image: line[1],
+			Name:   line[0],
+			Image:  line[1],
 			Height: line[2],
-			Age: age,
-			Bust: line[4],
-			Cup: line[5],
-			West: line[6],
-			Hip: line[7],
+			Age:    age,
+			Bust:   line[4],
+			Cup:    line[5],
+			West:   line[6],
+			Hip:    line[7],
 		}
-
-		//fmt.Println("Count: ", count)
-		//count++
-		//if len(line) == 1 {
-		//	//for _, v := range line {
-		//	//	fmt.Println(v)
-		//	//}
-		//	fmt.Println(len(e.Payload))
-		//}
 
 		responses = append(responses, response)
 	}
 
 	return responses, nil
+}
+
+func createSQL(params Params) string {
+	sql := "SELECT * FROM S3Object s "
+	var sqlArr []string
+	var cup []string
+	for _, param := range params {
+		switch param {
+		case "低身長":
+			sqlArr = append(sqlArr, `CAST(s.height AS INT) < 150`)
+		case "高身長":
+			sqlArr = append(sqlArr, `CAST(s.height AS INT) > 170`)
+		case "貧尻":
+			sqlArr = append(sqlArr, `CAST(s.hip AS INT) < 85`)
+		case "巨尻":
+			sqlArr = append(sqlArr, `CAST(s.hip AS INT) > 90`)
+		case "若手":
+			now := time.Now().AddDate(-30, 0, 0).Format("2006-01-02")
+			sqlArr = append(sqlArr, fmt.Sprintf(`s.birthday > '%s'`, now))
+		case "熟女":
+			now := time.Now().AddDate(-30, 0, 0).Format("2006-01-02")
+			sqlArr = append(sqlArr, fmt.Sprintf(`s.birthday < '%s'`, now))
+		case "貧乳":
+			cup = append(cup, "'A'", "'B'")
+		case "普乳":
+			cup = append(cup, "'C'")
+		case "巨乳":
+			cup = append(cup, "'D'", "'E'", "'F'")
+		case "爆乳":
+			cup = append(cup, "'G'", "'H'", "'I'", "'J'", "'K'")
+		case "超乳":
+			cup = append(cup, "'L'", "'M'", "'N'", "'O'", "'P'")
+		}
+	}
+
+	if len(cup) != 0 {
+		cupWhere := `s.cup IN (` + strings.Join(cup, ",") + `)`
+		sqlArr = append(sqlArr, cupWhere)
+	}
+
+	if len(params) != 0 {
+		sql += "WHERE " + strings.Join(sqlArr, " AND ")
+	}
+
+	return sql
 }
 
 func calcAge(t time.Time) (string, error) {
@@ -198,11 +218,11 @@ func calcAge(t time.Time) (string, error) {
 }
 
 func successResponse(body string) (events.APIGatewayProxyResponse, error) {
-	return events.APIGatewayProxyResponse{StatusCode: 200, Body: body}, nil
+	return events.APIGatewayProxyResponse{StatusCode: 200, Body: body, Headers: map[string]string{"Content-Type": "application/json", "Access-Control-Allow-Origin": "*"}}, nil
 }
 
 func errorResponse() events.APIGatewayProxyResponse {
-	return events.APIGatewayProxyResponse{StatusCode: 500, Body: "Internal Server Error"}
+	return events.APIGatewayProxyResponse{StatusCode: 500, Body: "Internal Server Error", Headers: map[string]string{"Access-Control-Allow-Origin": "*"}}
 }
 
 func main() {
